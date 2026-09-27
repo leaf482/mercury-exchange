@@ -2,11 +2,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mercury_sim.compare import compare_files, find_jsonl_replay
+from mercury_sim.compare import compare_files, compare_invariants, find_app, find_jsonl_replay
 from mercury_sim.events import write_jsonl
-from mercury_sim.generate import generate_events
+from mercury_sim.generate import generate_events, generate_stress_events
 
 REPLAY_BIN = find_jsonl_replay()
+BOOK_BIN = find_app("book_snapshot")
+REPORT_BIN = find_app("account_report")
 
 
 @unittest.skipUnless(REPLAY_BIN is not None, "jsonl_replay binary not built")
@@ -20,6 +22,20 @@ class ParityTests(unittest.TestCase):
 
         self.assertEqual(py_trades, cxx_trades)
         self.assertGreater(len(py_trades), 0)
+
+    @unittest.skipUnless(
+        REPLAY_BIN is not None and BOOK_BIN is not None and REPORT_BIN is not None,
+        "replay tools not built",
+    )
+    def test_stress_invariants_match(self) -> None:
+        for seed in (1, 7, 42):
+            events = generate_stress_events(240, seed=seed)
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "events.jsonl"
+                write_jsonl(str(path), events)
+                summary = compare_invariants(path, REPLAY_BIN, BOOK_BIN, REPORT_BIN)
+            self.assertGreater(summary["trades"], 0, msg=f"seed {seed} produced no trades")
+            self.assertGreaterEqual(summary["books"], 1)
 
 
 if __name__ == "__main__":

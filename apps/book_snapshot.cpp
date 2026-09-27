@@ -1,5 +1,6 @@
 #include "mercury/jsonl.hpp"
 
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -24,12 +25,14 @@ void write_levels(std::ostream& out, const std::vector<mercury::BookLevel>& leve
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc < 2 || argc > 3) {
-    std::cerr << "usage: book_snapshot <events.jsonl> [depth]\n";
+  if (argc < 2 || argc > 4) {
+    std::cerr << "usage: book_snapshot <events.jsonl> [depth] [symbol]\n";
     return 1;
   }
 
-  const std::size_t depth = (argc == 3) ? static_cast<std::size_t>(std::stoul(argv[2])) : 10;
+  const std::size_t depth = (argc >= 3) ? static_cast<std::size_t>(std::stoul(argv[2])) : 10;
+  const auto symbol = mercury::Symbol{
+      (argc == 4) ? static_cast<std::uint64_t>(std::stoull(argv[3])) : 0};
 
   std::ifstream input(argv[1]);
   if (!input) {
@@ -40,7 +43,7 @@ int main(int argc, char** argv) {
   const auto log = mercury::jsonl::load_event_log(input);
   mercury::Engine engine;
   mercury::replay(engine, log);
-  const auto snap = engine.snapshot(depth);
+  const auto snap = engine.snapshot(depth, symbol);
 
   std::cout << "{\"bids\":";
   write_levels(std::cout, snap.bids);

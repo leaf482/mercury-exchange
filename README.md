@@ -71,8 +71,8 @@ Details and semantics: [`docs/architecture.md`](docs/architecture.md).
 Approximate automated coverage (counts drift as the suite grows):
 
 - ~152 C++ GoogleTest cases
-- ~48 Python `unittest` cases
-- C++/Python trade parity via `mercury_sim.compare`
+- ~50 Python `unittest` cases
+- C++/Python parity via `mercury_sim.compare` (trades, per-symbol books, account reports)
 
 The Python engine is an independent reference implementation of matching and
 accounting behavior, used to catch C++ regressions through shared JSONL events.
@@ -136,6 +136,7 @@ python -m mercury_sim.generate -n 100 --mode market --seed 1 -o market.jsonl
 python -m mercury_sim.analyze events.jsonl
 python -m mercury_sim.replay events.jsonl
 python -m mercury_sim.compare events.jsonl
+python -m mercury_sim.compare --stress --seed 1 --count 400
 python -m unittest discover -s tests
 ```
 
