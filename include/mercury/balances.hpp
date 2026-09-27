@@ -4,6 +4,8 @@
 
 #include <cstdint>
 #include <map>
+#include <utility>
+#include <vector>
 
 namespace mercury {
 
@@ -32,6 +34,16 @@ class Balances {
     if (amount != 0) {
       reserved_[account] += amount;
     }
+  }
+
+  std::vector<std::pair<AccountId, std::int64_t>> cash_entries() const {
+    std::vector<std::pair<AccountId, std::int64_t>> out;
+    for (const auto& [account, amount] : cash_) {
+      if (amount != 0) {
+        out.emplace_back(account, amount);
+      }
+    }
+    return out;
   }
 
   void release(AccountId account, std::int64_t amount) {

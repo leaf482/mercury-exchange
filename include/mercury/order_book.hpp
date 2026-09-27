@@ -191,6 +191,36 @@ class OrderBook {
     return asks_.begin()->first;
   }
 
+  // Place an already-resting order without matching or re-arming the iceberg tip.
+  void restore(Order order) {
+    const OrderId id = order.id;
+    const RestingLocation loc{order.side, order.price};
+    if (order.side == Side::Buy) {
+      auto [it, _] = bids_.try_emplace(order.price, order.price);
+      it->second.enqueue(std::move(order));
+    } else {
+      auto [it, _] = asks_.try_emplace(order.price, order.price);
+      it->second.enqueue(std::move(order));
+    }
+    index_.emplace(id, loc);
+  }
+
+  // Price-time order: best bid first, then best ask, FIFO within a price.
+  std::vector<Order> resting_orders() const {
+    std::vector<Order> out;
+    auto append = [&](const auto& levels) {
+      for (const auto& [price, level] : levels) {
+        (void)price;
+        for (const Order& order : level.orders()) {
+          out.push_back(order);
+        }
+      }
+    };
+    append(bids_);
+    append(asks_);
+    return out;
+  }
+
   BookSnapshot snapshot(std::size_t max_levels) const {
     BookSnapshot snap;
     for (const auto& [price, level] : bids_) {

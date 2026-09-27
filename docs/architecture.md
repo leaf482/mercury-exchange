@@ -9,6 +9,7 @@ Single-threaded, deterministic matching core. Prices and quantities are integers
 apps/jsonl_replay          CLI: JSONL events -> trades
 apps/book_snapshot         CLI: JSONL -> book depth JSON
 apps/account_report        CLI: JSONL -> account equity JSON
+apps/restart_snapshot      CLI: JSONL -> restart state (book, positions, cash, clock)
 python/mercury_sim         generate / market sim / Engine replay / compare
 python/mercury_engine      optional pybind11 Engine / snapshot
         |

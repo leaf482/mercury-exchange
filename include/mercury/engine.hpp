@@ -57,6 +57,51 @@ struct AccountReport {
   std::int64_t equity{0};                      // cash + inventory_mark
 };
 
+struct RestartCash {
+  AccountId account{0};
+  std::int64_t amount{0};
+};
+
+struct RestartFees {
+  AccountId account{0};
+  std::int64_t amount{0};
+};
+
+struct RestartPosition {
+  AccountId account{0};
+  Symbol symbol{0};
+  std::int64_t quantity{0};
+  std::int64_t avg_ticks{0};
+  std::int64_t realized_pnl{0};
+};
+
+struct RestartLastTrade {
+  Symbol symbol{0};
+  Price price{0};
+};
+
+struct RestartOrder {
+  Order order;
+  Quantity cash_reserve_qty{0};
+};
+
+// Enough state to continue matching on a fresh Engine. Not a database: one
+// in-memory copy (and a JSONL encoding) of book, positions, cash, and clock.
+struct RestartSnapshot {
+  std::uint64_t now{0};
+  std::uint64_t next_trade_id{1};
+  bool enforce_cash{false};
+  FeeSchedule fees{};
+  SelfTradePrevention stp{SelfTradePrevention::Off};
+  RiskLimits limits{};
+  std::vector<RestartCash> cash;
+  std::vector<RestartFees> fees_paid;
+  std::vector<RestartPosition> positions;
+  std::vector<RestartLastTrade> last_trades;
+  std::vector<RestartOrder> orders;
+  std::vector<StopOrder> stops;
+};
+
 // Per-symbol OrderBooks + shared Positions, with risk checks and stop orders.
 class Engine {
  public:
@@ -351,6 +396,92 @@ class Engine {
 
   // Next id that will be assigned (starts at 1).
   TradeId next_trade_id() const { return TradeId{next_trade_id_}; }
+
+  RestartSnapshot restart_snapshot() const {
+    RestartSnapshot snap;
+    snap.now = now_;
+    snap.next_trade_id = next_trade_id_;
+    snap.enforce_cash = enforce_cash_;
+    snap.fees = fees_;
+    snap.stp = stp_;
+    snap.limits = limits_;
+    for (const auto& [account, amount] : balances_.cash_entries()) {
+      snap.cash.push_back(RestartCash{.account = account, .amount = amount});
+    }
+    for (const auto& [account, amount] : fees_paid_) {
+      if (amount != 0) {
+        snap.fees_paid.push_back(RestartFees{.account = account, .amount = amount});
+      }
+    }
+    for (const auto& row : positions_.entries()) {
+      snap.positions.push_back(RestartPosition{
+          .account = row.account,
+          .symbol = row.symbol,
+          .quantity = row.quantity,
+          .avg_ticks = row.avg_ticks,
+          .realized_pnl = row.realized_pnl,
+      });
+    }
+    for (const auto& [symbol, inst] : instruments_) {
+      if (inst.last_trade_price) {
+        snap.last_trades.push_back(
+            RestartLastTrade{.symbol = symbol, .price = *inst.last_trade_price});
+      }
+      for (const Order& order : inst.book.resting_orders()) {
+        Quantity reserve{0};
+        const auto open = open_orders_.find(order.id);
+        if (open != open_orders_.end()) {
+          reserve = open->second.cash_reserve_qty;
+        }
+        snap.orders.push_back(RestartOrder{.order = order, .cash_reserve_qty = reserve});
+      }
+      for (const StopOrder& stop : inst.stops) {
+        snap.stops.push_back(stop);
+      }
+    }
+    return snap;
+  }
+
+  // Replaces matching state. Caller-supplied config in `snap` wins.
+  void load_restart(const RestartSnapshot& snap) {
+    limits_ = snap.limits;
+    stp_ = snap.stp;
+    fees_ = snap.fees;
+    enforce_cash_ = snap.enforce_cash;
+    now_ = snap.now;
+    next_trade_id_ = snap.next_trade_id;
+    balances_ = Balances{};
+    instruments_.clear();
+    positions_ = Positions{};
+    open_orders_.clear();
+    working_.clear();
+    fees_paid_.clear();
+
+    for (const RestartCash& row : snap.cash) {
+      balances_.set_cash(row.account, row.amount);
+    }
+    for (const RestartFees& row : snap.fees_paid) {
+      fees_paid_[row.account] = row.amount;
+    }
+    for (const RestartPosition& row : snap.positions) {
+      positions_.assign(row.account, row.symbol, row.quantity, row.avg_ticks,
+                        row.realized_pnl);
+    }
+    for (const RestartLastTrade& row : snap.last_trades) {
+      instrument(row.symbol).last_trade_price = row.price;
+    }
+    for (const RestartOrder& row : snap.orders) {
+      const Order& order = row.order;
+      instrument(order.symbol).book.restore(order);
+      add_open(order.id, order.symbol, order.account, order.side, order.quantity,
+               order.price, order.display, order.expire_at, row.cash_reserve_qty);
+    }
+    for (const StopOrder& stop : snap.stops) {
+      add_open(stop.id, stop.symbol, stop.account, stop.side, stop.quantity, Price{0},
+               Quantity{0}, stop.expire_at);
+      instrument(stop.symbol).stops.push_back(stop);
+    }
+  }
 
  private:
   struct WorkingExposure {

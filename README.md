@@ -62,17 +62,18 @@ Details and semantics: [`docs/architecture.md`](docs/architecture.md).
 
 - Integer ticks / lots in the matching hot path
 - JSONL save / load / Engine replay
+- Restart snapshot JSONL (book, positions, cash, clock) to continue on a fresh Engine
 - Python twin simulator and C++/Python trade parity compare
 - Optional pybind11 `mercury_engine` bindings
-- CLIs: `jsonl_replay`, `book_snapshot`, `account_report`
+- CLIs: `jsonl_replay`, `book_snapshot`, `account_report`, `restart_snapshot`
 
 ## Correctness
 
 Approximate automated coverage (counts drift as the suite grows):
 
-- ~152 C++ GoogleTest cases
-- ~50 Python `unittest` cases
-- C++/Python parity via `mercury_sim.compare` (trades, per-symbol books, account reports)
+- ~155 C++ GoogleTest cases
+- ~51 Python `unittest` cases
+- C++/Python parity via `mercury_sim.compare` (trades, per-symbol books, account reports, restart snapshot)
 
 The Python engine is an independent reference implementation of matching and
 accounting behavior, used to catch C++ regressions through shared JSONL events.

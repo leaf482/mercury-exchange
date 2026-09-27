@@ -9,6 +9,7 @@ from mercury_sim.generate import generate_events, generate_stress_events
 REPLAY_BIN = find_jsonl_replay()
 BOOK_BIN = find_app("book_snapshot")
 REPORT_BIN = find_app("account_report")
+SNAPSHOT_BIN = find_app("restart_snapshot")
 
 
 @unittest.skipUnless(REPLAY_BIN is not None, "jsonl_replay binary not built")
@@ -24,7 +25,10 @@ class ParityTests(unittest.TestCase):
         self.assertGreater(len(py_trades), 0)
 
     @unittest.skipUnless(
-        REPLAY_BIN is not None and BOOK_BIN is not None and REPORT_BIN is not None,
+        REPLAY_BIN is not None
+        and BOOK_BIN is not None
+        and REPORT_BIN is not None
+        and SNAPSHOT_BIN is not None,
         "replay tools not built",
     )
     def test_stress_invariants_match(self) -> None:
@@ -33,7 +37,9 @@ class ParityTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "events.jsonl"
                 write_jsonl(str(path), events)
-                summary = compare_invariants(path, REPLAY_BIN, BOOK_BIN, REPORT_BIN)
+                summary = compare_invariants(
+                    path, REPLAY_BIN, BOOK_BIN, REPORT_BIN, SNAPSHOT_BIN
+                )
             self.assertGreater(summary["trades"], 0, msg=f"seed {seed} produced no trades")
             self.assertGreaterEqual(summary["books"], 1)
 

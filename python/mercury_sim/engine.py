@@ -90,6 +90,121 @@ class Engine:
     def next_trade_id(self) -> int:
         return self._next_trade_id
 
+    def enforce_cash(self) -> bool:
+        return self._enforce_cash
+
+    def maker_bps(self) -> int:
+        return self._maker_bps
+
+    def taker_bps(self) -> int:
+        return self._taker_bps
+
+    def stp(self) -> str:
+        return self._stp
+
+    def cash_balances(self) -> list[tuple[int, int]]:
+        return sorted(self._cash.items())
+
+    def fees_balances(self) -> list[tuple[int, int]]:
+        return sorted(self._fees_paid.items())
+
+    def position_rows(self) -> list[dict]:
+        keys = set(self._positions) | set(self._realized) | set(self._avg_ticks)
+        rows: list[dict] = []
+        for account, symbol in keys:
+            quantity = self.position(account, symbol)
+            realized = self.realized_pnl(account, symbol)
+            if quantity == 0 and realized == 0:
+                continue
+            rows.append(
+                {
+                    "account": account,
+                    "symbol": symbol,
+                    "quantity": quantity,
+                    "avg_ticks": self._avg_ticks.get((account, symbol), 0),
+                    "realized_pnl": realized,
+                }
+            )
+        rows.sort(key=lambda row: (row["account"], row["symbol"]))
+        return rows
+
+    def last_trades(self) -> list[tuple[int, int]]:
+        return sorted(self._last_trade.items())
+
+    def resting_rows(self) -> list[tuple[Order, int]]:
+        symbols = set(self._books)
+        rows: list[tuple[Order, int]] = []
+        for symbol in sorted(symbols):
+            for order in self.book(symbol).resting_orders():
+                rest = self._cash_rests.get(order.id)
+                reserve = rest[2] if rest is not None else 0
+                rows.append((order, reserve))
+        return rows
+
+    def pending_stops(self) -> list[StopEvent]:
+        stops: list[StopEvent] = []
+        for symbol in sorted(self._stops):
+            for item in self._stops[symbol]:
+                stops.append(item.event)
+        return stops
+
+    def load_restart_records(self, records: list[dict]) -> None:
+        from mercury_sim.events import StopEvent as _Stop
+
+        meta = records[0]
+        self._now = int(meta["now"])
+        self._next_trade_id = int(meta["next_trade_id"])
+        for rec in records[1:]:
+            kind = rec["type"]
+            if kind == "cash":
+                self._cash[int(rec["account"])] = int(rec["amount"])
+            elif kind == "fees_paid":
+                self._fees_paid[int(rec["account"])] = int(rec["amount"])
+            elif kind == "position":
+                key = (int(rec["account"]), int(rec["symbol"]))
+                self._positions[key] = int(rec["quantity"])
+                self._avg_ticks[key] = int(rec["avg_ticks"])
+                self._realized[key] = int(rec["realized_pnl"])
+            elif kind == "last_trade":
+                self._last_trade[int(rec["symbol"])] = int(rec["price"])
+            elif kind == "order":
+                order = Order(
+                    id=int(rec["id"]),
+                    side=rec["side"],
+                    price=int(rec["price"]),
+                    quantity=int(rec["quantity"]),
+                    account=int(rec["account"]),
+                    tif=rec.get("tif", "gtc"),
+                    symbol=int(rec["symbol"]),
+                    display=int(rec["display"]),
+                    visible=int(rec["visible"]),
+                    expire_at=int(rec["expire_at"]),
+                )
+                self.book(order.symbol).restore_resting(order)
+                if order.expire_at:
+                    self._expire_at[order.id] = order.expire_at
+                reserve = int(rec["cash_reserve_qty"])
+                if self._enforce_cash and reserve:
+                    self._reserve_cash(order.id, order.account, order.price, reserve)
+            elif kind == "stop":
+                stop = _Stop(
+                    id=int(rec["id"]),
+                    side=rec["side"],
+                    stop_price=int(rec["stop_price"]),
+                    quantity=int(rec["quantity"]),
+                    account=int(rec["account"]),
+                    limit_price=rec.get("limit_price"),
+                    tif=rec.get("tif", "gtc"),
+                    symbol=int(rec["symbol"]),
+                    expire_at=int(rec.get("expire_at", 0)),
+                )
+                self._stops.setdefault(stop.symbol, []).append(_PendingStop(event=stop))
+                self._stop_index[stop.id] = stop.symbol
+                if stop.expire_at:
+                    self._expire_at[stop.id] = stop.expire_at
+            else:
+                raise ValueError(f"unknown snapshot type: {kind}")
+
     def realized_pnl(self, account: int, symbol: int = 0) -> int:
         return self._realized.get((account, symbol), 0)
 

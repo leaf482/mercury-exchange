@@ -14,7 +14,7 @@ recruiter-oriented overview.
 | Matching (limit/market/cancel, TIF+GTD, stop, replace, mass cancel, iceberg) | Done |
 | Risk (size/position, STP, post-only, reduce-only, cash+buy/short reserve) | Done |
 | Positions / PnL / fees / TradeId / account report | Done |
-| Deterministic JSONL + Engine replay + Python parity (stress) | Done |
+| Deterministic JSONL + restart snapshot + Python parity | Done |
 | Per-operation latency (median / p95 / p99) | Done — no shard hotspot |
 | Networking / UI / multi-thread shards | Not started (deferred) |
 
@@ -48,7 +48,8 @@ recruiter-oriented overview.
 - Account report (cash / reserved / positions / mark PnL / equity)
 - `account_report` CLI + iceberg/account_report latency benches (refreshed)
 - Per-operation latency sampler (`mercury_latency`: 10k samples, cycle counter)
-- Seeded stress JSONL parity (trades, books, account reports; `compare --stress`)
+- Seeded stress JSONL parity (trades, books, account reports, restart snapshot)
+- Restart snapshot JSONL (`restart_snapshot`: resume book, positions, cash, clock)
 
 ## Next (small steps)
 

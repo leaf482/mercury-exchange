@@ -80,6 +80,40 @@ class Positions {
     std::int64_t realized_pnl = 0;
   };
 
+  void assign(AccountId account, Symbol symbol, std::int64_t quantity,
+              std::int64_t avg_ticks, std::int64_t realized_pnl) {
+    if (quantity == 0 && realized_pnl == 0 && avg_ticks == 0) {
+      return;
+    }
+    accounts_[{account, symbol}] =
+        AccountState{.qty = quantity, .avg_ticks = avg_ticks, .realized = realized_pnl};
+  }
+
+  struct Stored {
+    AccountId account;
+    Symbol symbol;
+    std::int64_t quantity = 0;
+    std::int64_t avg_ticks = 0;
+    std::int64_t realized_pnl = 0;
+  };
+
+  std::vector<Stored> entries() const {
+    std::vector<Stored> out;
+    for (const auto& [key, state] : accounts_) {
+      if (state.qty == 0 && state.realized == 0) {
+        continue;
+      }
+      out.push_back(Stored{
+          .account = key.first,
+          .symbol = key.second,
+          .quantity = state.qty,
+          .avg_ticks = state.avg_ticks,
+          .realized_pnl = state.realized,
+      });
+    }
+    return out;
+  }
+
   // Non-flat or realized-nonzero rows for one account.
   std::vector<Entry> for_account(AccountId account) const {
     std::vector<Entry> out;

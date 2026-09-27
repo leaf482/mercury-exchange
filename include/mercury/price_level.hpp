@@ -76,6 +76,8 @@ class PriceLevel {
   }
 
   // Book depth: iceberg peaks only (hidden size excluded).
+  const std::deque<Order>& orders() const { return orders_; }
+
   Quantity visible_quantity() const {
     std::uint64_t total = 0;
     for (const Order& order : orders_) {

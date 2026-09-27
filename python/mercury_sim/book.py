@@ -158,6 +158,20 @@ class OrderBook:
     def is_live(self, order_id: int) -> bool:
         return order_id in self._index
 
+    def restore_resting(self, order: Order) -> None:
+        """Put an order back on the book without matching or re-arming the tip."""
+        levels = self._bids if order.side == "buy" else self._asks
+        levels.setdefault(order.price, deque()).append(order)
+        self._index[order.id] = (order.side, order.price)
+
+    def resting_orders(self) -> list[Order]:
+        orders: list[Order] = []
+        for price in sorted(self._bids, reverse=True):
+            orders.extend(self._bids[price])
+        for price in sorted(self._asks):
+            orders.extend(self._asks[price])
+        return orders
+
     def live_orders(self) -> list[Order]:
         orders: list[Order] = []
         for order_id, (side, price) in self._index.items():

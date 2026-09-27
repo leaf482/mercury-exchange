@@ -9,6 +9,7 @@ from mercury_sim.engine import Engine
 from mercury_sim.events import Event, read_jsonl, write_jsonl
 from mercury_sim.generate import generate_events, generate_stress_events
 from mercury_sim.replay import replay
+from mercury_sim.snapshot import lines_from_engine
 
 
 def find_app(name: str, repo_root: Path | None = None) -> Path | None:
@@ -95,6 +96,23 @@ def _canon_report(report: dict) -> dict:
     }
 
 
+def python_restart_lines(events: list[Event]) -> list[str]:
+    engine = Engine()
+    for event in events:
+        engine.apply(event)
+    return lines_from_engine(engine)
+
+
+def cpp_restart_lines(events_path: Path, snapshot_bin: Path) -> list[str]:
+    result = subprocess.run(
+        [str(snapshot_bin), str(events_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
 def python_invariants(
     events: list[Event], symbols: list[int], accounts: list[int], depth: int
 ) -> dict:
@@ -160,7 +178,9 @@ def cpp_invariants(
     }
 
 
-def invariant_mismatch(python_state: dict, cpp_state: dict) -> str | None:
+def invariant_mismatch(
+    python_state: dict, cpp_state: dict, python_restart: list[str], cpp_restart: list[str]
+) -> str | None:
     py_trades = python_state["trades"]
     cxx_trades = cpp_state["trades"]
     if py_trades != cxx_trades:
@@ -179,6 +199,11 @@ def invariant_mismatch(python_state: dict, cpp_state: dict) -> str | None:
         other = cpp_state["reports"].get(account)
         if marks != other:
             return f"account={account}\npython={marks}\ncpp={other}"
+    if python_restart != cpp_restart:
+        return (
+            f"restart python={len(python_restart)} lines cpp={len(cpp_restart)} lines\n"
+            f"python={python_restart}\ncpp={cpp_restart}"
+        )
     return None
 
 
@@ -187,6 +212,7 @@ def compare_invariants(
     replay_bin: Path,
     book_bin: Path,
     report_bin: Path,
+    snapshot_bin: Path,
     depth: int = 32,
 ) -> dict:
     events = read_jsonl(str(events_path))
@@ -196,7 +222,12 @@ def compare_invariants(
     cpp_state = cpp_invariants(
         events_path, replay_bin, book_bin, report_bin, symbols, accounts, depth
     )
-    mismatch = invariant_mismatch(python_state, cpp_state)
+    mismatch = invariant_mismatch(
+        python_state,
+        cpp_state,
+        python_restart_lines(events),
+        cpp_restart_lines(events_path, snapshot_bin),
+    )
     if mismatch is not None:
         raise SystemExit(f"mismatch: {mismatch}")
     return {
@@ -215,13 +246,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--replay-bin", type=Path, default=None)
     parser.add_argument("--book-bin", type=Path, default=None)
     parser.add_argument("--report-bin", type=Path, default=None)
+    parser.add_argument("--snapshot-bin", type=Path, default=None)
     args = parser.parse_args(argv)
 
     replay_bin = args.replay_bin or find_jsonl_replay()
     book_bin = args.book_bin or find_app("book_snapshot")
     report_bin = args.report_bin or find_app("account_report")
-    if replay_bin is None or book_bin is None or report_bin is None:
-        raise SystemExit("jsonl_replay, book_snapshot, and account_report must be built")
+    snapshot_bin = args.snapshot_bin or find_app("restart_snapshot")
+    if None in (replay_bin, book_bin, report_bin, snapshot_bin):
+        raise SystemExit(
+            "jsonl_replay, book_snapshot, account_report, and restart_snapshot must be built"
+        )
 
     if args.events:
         events_path = Path(args.events)
@@ -234,7 +269,9 @@ def main(argv: list[str] | None = None) -> None:
         )
         write_jsonl(str(events_path), events)
 
-    summary = compare_invariants(events_path, replay_bin, book_bin, report_bin)
+    summary = compare_invariants(
+        events_path, replay_bin, book_bin, report_bin, snapshot_bin
+    )
     print(
         f"ok: {summary['trades']} matching trades, "
         f"{summary['books']} books, {summary['accounts']} accounts"
