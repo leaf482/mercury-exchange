@@ -1,32 +1,34 @@
 # Latency notes
 
-Measured with `mercury_bench` (Google Benchmark), Release build, Clang,
-Windows host (16 x 4700 MHz). Values are wall-clock nanoseconds.
+Published numbers come from `mercury_latency`, Release build, Clang, Windows
+host (16 x 4700 MHz). One run, 2026-09-26.
 
-Each benchmark runs with **20 Google Benchmark repetitions**
-(`Repetitions(20)`). The columns below are statistics over those **20
-repetition timings**, not percentiles over a large sample of individual order
-operations. Treat them as:
+Each path times **one call** per sample: **500** warmup calls, then **10,000**
+samples. Book seeding stays outside the timer. The clock is `__rdtscp` (with
+`lfence`), converted to nanoseconds with a 200 ms `steady_clock` calibration
+(about **0.213 ns/tick** on this host). Percentile index is
+`floor(p * (n - 1))` after sorting the samples.
 
-- **median repetition** — median of the 20 repetition timings
-- **repetition p95 / p99** — 95th / 99th percentile of the 20 repetition timings
+Medians on a second run of the same binary stayed within a few percent.
+p99 moved more, especially deep-book and iceberg tails, so treat the tail
+columns as one snapshot.
 
-| Path | median repetition | repetition p95 | repetition p99 |
+| Path | median (ns) | p95 (ns) | p99 (ns) |
 | --- | ---: | ---: | ---: |
-| Rest limit | 289 | 302 | 302 |
-| Match 1-lot limit | 374 | 379 | 379 |
-| Cancel | 188 | 190 | 190 |
-| Match deep book (8 levels) | 954 | 980 | 980 |
-| Match deep book (32 levels) | 3243 | 3284 | 3284 |
-| Match deep book (128 levels) | 14690 | 15044 | 15044 |
-| Match one of N symbols (1) | 378 | 387 | 387 |
-| Match one of N symbols (8) | 885 | 907 | 907 |
-| Match one of N symbols (32) | 3161 | 3245 | 3245 |
-| Mass cancel account × symbols (8) | 1489 | 1510 | 1510 |
-| Mass cancel account × symbols (32) | 6452 | 6513 | 6513 |
-| Iceberg tip-refill (hidden 32, display 1) | 1228 | 1244 | 1244 |
-| Iceberg tip-refill (hidden 128, display 1) | 3879 | 3919 | 3919 |
-| Account report | 314 | 318 | 318 |
+| Rest limit | 130 | 160 | 220 |
+| Match 1-lot limit | 200 | 220 | 260 |
+| Cancel | 80 | 80 | 90 |
+| Match deep book (8 levels) | 750 | 930 | 1500 |
+| Match deep book (32 levels) | 3070 | 3460 | 5990 |
+| Match deep book (128 levels) | 12690 | 27040 | 35281 |
+| Match one of N symbols (1) | 200 | 230 | 370 |
+| Match one of N symbols (8) | 200 | 230 | 380 |
+| Match one of N symbols (32) | 250 | 320 | 490 |
+| Mass cancel account × symbols (8) | 620 | 660 | 1130 |
+| Mass cancel account × symbols (32) | 2860 | 3040 | 5230 |
+| Iceberg tip-refill (hidden 32, display 1) | 1040 | 1080 | 1240 |
+| Iceberg tip-refill (hidden 128, display 1) | 3360 | 5190 | 5400 |
+| Account report | 90 | 110 | 130 |
 
 Deep-book cases seed N ask levels (1 lot each) and sweep them with one buy.
 Multi-symbol match seeds one resting ask per symbol (untimed) and crosses
@@ -34,15 +36,21 @@ symbol 0. Mass cancel rests two buys per symbol (accounts 1 and 2), then
 cancels account 1. Iceberg cases rest one sell with `display=1` and take the
 full hidden size (tip refill + requeue each lot).
 
+`mercury_bench` (Google Benchmark, 20 repetitions) is still built. Its
+repetition percentiles are a small sample of averaged runs, and `PauseTiming`
+around sub-microsecond work distorted the multi-symbol path. Do not read those
+columns as per-order latency. The table above replaces them.
+
 ## Shard decision
 
-Single-thread match on one of 32 symbols is ~3 µs **median repetition**. Cost
-grows with instrument map lookups / book depth, not with a contended shared
-lock. No hotspot yet that justifies shard-by-symbol threading; keep measuring
-before adding concurrency.
+A single-thread match on one of 32 symbols is about **250 ns median** and
+about **490 ns p99**. Going from 1 symbol to 32 added tens of nanoseconds, not
+microseconds. The slow paths are book depth and hidden-size refill (deep 128
+about **13 µs** median, about **35 µs** p99), which stay on one book. No
+hotspot yet that justifies shard-by-symbol threading.
 
 ```bash
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
-cmake --build build-release --target mercury_bench
-./build-release/benchmarks/mercury_bench
+cmake --build build-release --target mercury_latency
+./build-release/benchmarks/mercury_latency
 ```

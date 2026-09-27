@@ -67,7 +67,7 @@ EventLog / jsonl           Engine replay (+ reject no-ops, GTD `time` ticks)
 | `include/mercury/` | public headers (header-mostly library) |
 | `src/` | small compiled pieces (`version`) |
 | `tests/` | GoogleTest |
-| `benchmarks/` | Google Benchmark latency |
+| `benchmarks/` | `mercury_latency` per-op samples; `mercury_bench` still built |
 | `apps/` | executables |
 | `python/` | simulation and C++/Python parity |
 | `docs/` | design / latency notes |

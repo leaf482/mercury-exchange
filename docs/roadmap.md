@@ -15,7 +15,7 @@ recruiter-oriented overview.
 | Risk (size/position, STP, post-only, reduce-only, cash+buy/short reserve) | Done |
 | Positions / PnL / fees / TradeId / account report | Done |
 | Deterministic JSONL + Engine replay + Python parity | Done |
-| Latency benches (single-thread; refreshed) | Done — no shard hotspot |
+| Per-operation latency (median / p95 / p99) | Done — no shard hotspot |
 | Networking / UI / multi-thread shards | Not started (deferred) |
 
 ## Done
@@ -47,6 +47,7 @@ recruiter-oriented overview.
 - Short margin under `enforce_cash`: uncovered sells need/reserve cash like buys
 - Account report (cash / reserved / positions / mark PnL / equity)
 - `account_report` CLI + iceberg/account_report latency benches (refreshed)
+- Per-operation latency sampler (`mercury_latency`: 10k samples, cycle counter)
 
 ## Next (small steps)
 

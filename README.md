@@ -6,10 +6,10 @@ implements price-time priority matching, multi-instrument order books,
 risk/accounting, advanced order semantics, deterministic JSONL replay, and an
 independent Python reference engine for parity testing.
 
-The matching core is intentionally **single-threaded**. Current benchmarks remain
-in the microsecond range — including roughly **3 µs median** for a single match
-with about **32** populated symbols — so symbol sharding is deferred until
-measurement shows a real bottleneck.
+The matching core is intentionally **single-threaded**. A measured match against
+one of about **32** populated symbols is about **250 ns median** (p99 about
+**490 ns**), so symbol sharding is deferred until measurement shows a real
+bottleneck.
 
 This is a **personal / learning / portfolio project**. It is not connected to
 live markets or real money.
@@ -79,18 +79,18 @@ accounting behavior, used to catch C++ regressions through shared JSONL events.
 
 ## Benchmarks
 
-Measured with `mercury_bench` (Google Benchmark), Release build, Clang on a
-Windows host (16×4700 MHz). Reported times are **wall-clock nanoseconds** over
-**20 Google Benchmark repetitions** (not a large sample of individual order
-latencies). Prefer **median repetition** when comparing paths.
+Measured with `mercury_latency` (one timed call per sample), Release build,
+Clang on a Windows host (16×4700 MHz). Each path is **10,000** samples after
+**500** warmup calls. Setup (seeding the book) is outside the timer. Times are
+estimated nanoseconds from a cycle counter calibrated to `steady_clock`.
 
-| Path | median repetition (ns) |
-| --- | ---: |
-| Rest limit | 289 |
-| Match 1-lot limit | 374 |
-| Match deep book (32 levels) | 3243 |
-| Match one of ~32 symbols | 3161 |
-| Iceberg tip-refill (hidden 128, display 1) | 3879 |
+| Path | median (ns) | p99 (ns) |
+| --- | ---: | ---: |
+| Rest limit | 130 | 220 |
+| Match 1-lot limit | 200 | 260 |
+| Match deep book (32 levels) | 3070 | 5990 |
+| Match one of 32 symbols | 250 | 490 |
+| Iceberg tip-refill (hidden 128, display 1) | 3360 | 5400 |
 
 Current measurements do **not** show a bottleneck that justifies adding symbol
 sharding or multithreaded matching yet. Full table and methodology:
@@ -122,8 +122,8 @@ Release latency benchmark:
 
 ```bash
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
-cmake --build build-release --target mercury_bench
-./build-release/benchmarks/mercury_bench
+cmake --build build-release --target mercury_latency
+./build-release/benchmarks/mercury_latency
 ```
 
 ## Python
