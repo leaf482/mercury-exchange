@@ -4,6 +4,7 @@
 
 namespace mercury {
 
+// One fill. Trade price is always the resting (maker) price.
 struct Trade {
   OrderId maker_id;
   OrderId taker_id;
@@ -11,12 +12,6 @@ struct Trade {
   AccountId taker_account{0};
   Price price;
   Quantity quantity;
-  Symbol symbol{0};
-  // Signed fee in tick*qty units (positive = account pays). Set by Engine.
-  std::int64_t maker_fee{0};
-  std::int64_t taker_fee{0};
-  // Assigned by Engine (monotonic from 1). Bare OrderBook leaves 0.
-  TradeId id{0};
 
   constexpr bool operator==(const Trade&) const = default;
 };

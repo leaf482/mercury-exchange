@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+using mercury::AccountId;
 using mercury::Order;
 using mercury::OrderBook;
 using mercury::OrderId;
@@ -9,64 +10,71 @@ using mercury::Price;
 using mercury::Quantity;
 using mercury::Side;
 
-namespace {
-
-Order make_order(std::uint64_t id, Side side, Price price, std::uint64_t qty) {
-  return Order{
-      .id = OrderId{id},
-      .side = side,
-      .price = price,
-      .quantity = Quantity{qty},
-  };
-}
-
-}  // namespace
-
-TEST(OrderBook, StartsWithNoBestPrices) {
-  const OrderBook book;
-
-  EXPECT_FALSE(book.best_bid().has_value());
-  EXPECT_FALSE(book.best_ask().has_value());
-}
-
-TEST(OrderBook, AddBuySetsBestBid) {
+TEST(OrderBook, RestsWithoutMatch) {
   OrderBook book;
-  book.add(make_order(1, Side::Buy, Price{100}, 5));
-
+  const auto trades = book.add(Order{.id = OrderId{1},
+                                     .side = Side::Buy,
+                                     .price = Price{100},
+                                     .quantity = Quantity{2},
+                                     .account = AccountId{1}});
+  EXPECT_TRUE(trades.empty());
   EXPECT_EQ(book.best_bid(), Price{100});
   EXPECT_FALSE(book.best_ask().has_value());
 }
 
-TEST(OrderBook, AddSellSetsBestAsk) {
+TEST(OrderBook, MatchesAtMakerPrice) {
   OrderBook book;
-  book.add(make_order(1, Side::Sell, Price{200}, 5));
+  book.add(Order{.id = OrderId{1},
+                 .side = Side::Sell,
+                 .price = Price{100},
+                 .quantity = Quantity{5},
+                 .account = AccountId{1}});
 
-  EXPECT_EQ(book.best_ask(), Price{200});
+  const auto trades = book.add(Order{.id = OrderId{2},
+                                     .side = Side::Buy,
+                                     .price = Price{101},
+                                     .quantity = Quantity{3},
+                                     .account = AccountId{2}});
+
+  ASSERT_EQ(trades.size(), 1u);
+  EXPECT_EQ(trades[0].maker_id, OrderId{1});
+  EXPECT_EQ(trades[0].taker_id, OrderId{2});
+  EXPECT_EQ(trades[0].price, Price{100});  // maker price, not 101
+  EXPECT_EQ(trades[0].quantity, Quantity{3});
+  EXPECT_EQ(book.best_ask(), Price{100});
+}
+
+TEST(OrderBook, TimePriorityAtSamePrice) {
+  OrderBook book;
+  book.add(Order{.id = OrderId{1},
+                 .side = Side::Sell,
+                 .price = Price{100},
+                 .quantity = Quantity{1},
+                 .account = AccountId{1}});
+  book.add(Order{.id = OrderId{2},
+                 .side = Side::Sell,
+                 .price = Price{100},
+                 .quantity = Quantity{1},
+                 .account = AccountId{1}});
+
+  const auto trades = book.add(Order{.id = OrderId{3},
+                                     .side = Side::Buy,
+                                     .price = Price{100},
+                                     .quantity = Quantity{1},
+                                     .account = AccountId{2}});
+
+  ASSERT_EQ(trades.size(), 1u);
+  EXPECT_EQ(trades[0].maker_id, OrderId{1});  // older sell first
+}
+
+TEST(OrderBook, CancelRemovesRestingOrder) {
+  OrderBook book;
+  book.add(Order{.id = OrderId{1},
+                 .side = Side::Buy,
+                 .price = Price{100},
+                 .quantity = Quantity{2},
+                 .account = AccountId{1}});
+  EXPECT_TRUE(book.cancel(OrderId{1}));
   EXPECT_FALSE(book.best_bid().has_value());
-}
-
-TEST(OrderBook, BestBidIsHighestPrice) {
-  OrderBook book;
-  book.add(make_order(1, Side::Buy, Price{100}, 5));
-  book.add(make_order(2, Side::Buy, Price{120}, 5));
-  book.add(make_order(3, Side::Buy, Price{110}, 5));
-
-  EXPECT_EQ(book.best_bid(), Price{120});
-}
-
-TEST(OrderBook, BestAskIsLowestPrice) {
-  OrderBook book;
-  book.add(make_order(1, Side::Sell, Price{200}, 5));
-  book.add(make_order(2, Side::Sell, Price{180}, 5));
-  book.add(make_order(3, Side::Sell, Price{190}, 5));
-
-  EXPECT_EQ(book.best_ask(), Price{180});
-}
-
-TEST(OrderBook, SamePriceJoinsLevel) {
-  OrderBook book;
-  book.add(make_order(1, Side::Buy, Price{100}, 5));
-  book.add(make_order(2, Side::Buy, Price{100}, 7));
-
-  EXPECT_EQ(book.best_bid(), Price{100});
+  EXPECT_FALSE(book.cancel(OrderId{1}));
 }

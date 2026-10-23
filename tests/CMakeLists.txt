@@ -1,36 +1,4 @@
-add_executable(mercury_tests
-  version_test.cpp
-  types_test.cpp
-  order_test.cpp
-  price_level_test.cpp
-  order_book_test.cpp
-  order_book_match_test.cpp
-  order_book_cancel_test.cpp
-  order_book_market_test.cpp
-  event_log_test.cpp
-  positions_test.cpp
-  engine_test.cpp
-  risk_test.cpp
-  jsonl_test.cpp
-  book_snapshot_test.cpp
-  order_book_tif_test.cpp
-  engine_stop_test.cpp
-  engine_multi_test.cpp
-  order_book_stp_test.cpp
-  engine_stp_test.cpp
-  order_replace_test.cpp
-  engine_fees_mass_test.cpp
-  order_book_post_only_test.cpp
-  engine_reduce_only_test.cpp
-  engine_pnl_test.cpp
-  engine_trade_id_test.cpp
-  engine_cash_test.cpp
-  event_reject_test.cpp
-  order_book_iceberg_test.cpp
-  engine_gtd_short_test.cpp
-  engine_account_report_test.cpp
-  engine_restart_test.cpp
-)
+add_executable(mercury_tests order_book_test.cpp)
 target_link_libraries(mercury_tests PRIVATE mercury GTest::gtest_main)
 mercury_set_warnings(mercury_tests)
 

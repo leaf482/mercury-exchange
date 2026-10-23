@@ -1,15 +1,3 @@
-add_executable(jsonl_replay jsonl_replay.cpp)
-target_link_libraries(jsonl_replay PRIVATE mercury)
-mercury_set_warnings(jsonl_replay)
-
-add_executable(book_snapshot book_snapshot.cpp)
-target_link_libraries(book_snapshot PRIVATE mercury)
-mercury_set_warnings(book_snapshot)
-
-add_executable(account_report account_report.cpp)
-target_link_libraries(account_report PRIVATE mercury)
-mercury_set_warnings(account_report)
-
-add_executable(restart_snapshot restart_snapshot.cpp)
-target_link_libraries(restart_snapshot PRIVATE mercury)
-mercury_set_warnings(restart_snapshot)
+add_executable(demo demo.cpp)
+target_link_libraries(demo PRIVATE mercury)
+mercury_set_warnings(demo)
