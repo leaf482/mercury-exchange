@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mercury/balances.hpp"
+#include "mercury/cash_policy.hpp"
 #include "mercury/engine_types.hpp"
 #include "mercury/order_book.hpp"
 #include "mercury/positions.hpp"
@@ -633,9 +634,13 @@ class Engine {
       }
     }
     if (side == Side::Buy) {
-      return check_buy_cash(account, symbol, cash_limit, quantity, is_market);
+      return check_buy_cash(enforce_cash_, balances_, book(symbol), account, cash_limit,
+                            quantity, is_market);
     }
-    return check_sell_margin(account, symbol, cash_limit, quantity, is_market);
+    const WorkingExposure exposure = working_for(account, symbol);
+    return check_sell_margin(enforce_cash_, balances_, book(symbol),
+                             positions_.quantity(account, symbol), account, cash_limit,
+                             quantity, is_market, exposure.sell);
   }
 
   SubmitResult submit_limit(Order order) {
@@ -687,20 +692,9 @@ class Engine {
 
     const Quantity rested{original.value() - filled.value()};
     if (rests_on_book(tif) && !rested.is_zero()) {
-      Quantity reserve_qty{0};
-      if (enforce_cash_ && order_price.ticks() != 0) {
-        if (taker_side == Side::Buy) {
-          reserve_qty = rested;
-        } else {
-          const std::uint64_t cover =
-              free_long(account, symbol, exposure.sell).value();
-          const std::uint64_t covered_fill = std::min(filled.value(), cover);
-          const std::uint64_t cover_left = cover - covered_fill;
-          const std::uint64_t short_rest =
-              rested.value() > cover_left ? rested.value() - cover_left : 0;
-          reserve_qty = Quantity{short_rest};
-        }
-      }
+      const Quantity reserve_qty = resting_cash_reserve(
+          enforce_cash_, taker_side, order_price, rested, filled,
+          positions_.quantity(account, symbol), exposure.sell);
       add_open(id, symbol, account, taker_side, rested, order_price, display,
                expire_at, reserve_qty);
     }
@@ -738,68 +732,6 @@ class Engine {
         reduce_open(id, it->second.remaining);
       }
     }
-  }
-
-  // Worst-case buy cost at limit price, or walking asks for market (available liquidity only).
-  RiskDecision check_buy_cash(AccountId account, Symbol symbol, Price limit,
-                              Quantity quantity, bool is_market) const {
-    if (!enforce_cash_) {
-      return RiskDecision::Accept;
-    }
-
-    std::int64_t need = 0;
-    if (!is_market) {
-      need = limit.ticks() * static_cast<std::int64_t>(quantity.value());
-    } else {
-      need = book(symbol).estimate_buy_notional(quantity, true);
-    }
-
-    if (balances_.available(account) < need) {
-      return RiskDecision::InsufficientCash;
-    }
-    return RiskDecision::Accept;
-  }
-
-  Quantity free_long(AccountId account, Symbol symbol,
-                     std::uint64_t working_sell) const {
-    const std::int64_t pos = positions_.quantity(account, symbol);
-    const std::int64_t long_qty = pos > 0 ? pos : 0;
-    const std::int64_t free = long_qty - static_cast<std::int64_t>(working_sell);
-    return Quantity{static_cast<std::uint64_t>(free > 0 ? free : 0)};
-  }
-
-  Quantity short_qty(AccountId account, Symbol symbol, Quantity quantity,
-                     std::uint64_t working_sell) const {
-    const std::uint64_t cover = free_long(account, symbol, working_sell).value();
-    if (quantity.value() <= cover) {
-      return Quantity{0};
-    }
-    return Quantity{quantity.value() - cover};
-  }
-
-  // Margin for the uncovered (short) portion of a sell.
-  RiskDecision check_sell_margin(AccountId account, Symbol symbol, Price limit,
-                                 Quantity quantity, bool is_market) const {
-    if (!enforce_cash_) {
-      return RiskDecision::Accept;
-    }
-    const WorkingExposure exposure = working_for(account, symbol);
-    const Quantity uncovered = short_qty(account, symbol, quantity, exposure.sell);
-    if (uncovered.is_zero()) {
-      return RiskDecision::Accept;
-    }
-
-    std::int64_t need = 0;
-    if (!is_market) {
-      need = limit.ticks() * static_cast<std::int64_t>(uncovered.value());
-    } else {
-      need = book(symbol).estimate_sell_notional(uncovered, true);
-    }
-
-    if (balances_.available(account) < need) {
-      return RiskDecision::InsufficientCash;
-    }
-    return RiskDecision::Accept;
   }
 
   RiskLimits limits_;
