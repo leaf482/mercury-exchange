@@ -12,24 +12,25 @@ benchmarks). The full engine lives on `main`.
 | File | Idea |
 | --- | --- |
 | `include/mercury/types.hpp` | Strong typedefs (`OrderId`, `Price`, `Quantity`) |
-| `include/mercury/order.hpp` | Limit order fields |
+| `include/mercury/order.hpp` | Limit / market orders; GTC vs IOC |
 | `include/mercury/trade.hpp` | Fill report; price = maker price |
 | `include/mercury/price_level.hpp` | One price → FIFO `std::deque` |
-| `include/mercury/order_book.hpp` | Bids/asks maps + match/cancel |
+| `include/mercury/order_book.hpp` | Bids/asks maps + match / cancel / market |
 
 Suggested study path:
 
 1. Why `Price` is an integer (ticks), not `double`
 2. Why bids use `std::map<..., std::greater<>>` and asks use the default order
 3. Walk `match_buy` / `fill_level`: maker price, partial fills, index cleanup
-4. Run the tests, then change something and watch a test fail
+4. Compare GTC (rest leftover) vs IOC (discard leftover) vs `add_market`
+5. Run the tests, then change something and watch a test fail
 
 ## Layout
 
 ```text
 include/mercury/   header-only matching core
-apps/demo.cpp      print one match
-tests/             GoogleTest for rest / match / FIFO / cancel
+apps/demo.cpp      print limit / IOC / market fills
+tests/             GoogleTest for rest / match / FIFO / cancel / IOC / market
 ```
 
 ## Build
@@ -45,6 +46,6 @@ ctest --test-dir build --output-on-failure
 
 ## Deliberately missing
 
-GTD, iceberg, stops, STP, fees, cash, risk limits, multi-symbol Engine,
+FOK, GTD, iceberg, stops, STP, fees, cash, risk limits, multi-symbol Engine,
 JSONL replay, Python twin, latency benches. Add those back on `main` when you
 want the full portfolio project.
