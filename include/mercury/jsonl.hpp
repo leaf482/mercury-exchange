@@ -183,6 +183,108 @@ inline const char* format_decision(RiskDecision decision) {
   return "accept";
 }
 
+inline Order parse_limit_order(std::string_view line) {
+  return Order{
+      .id = OrderId{static_cast<std::uint64_t>(require_int(line, "id"))},
+      .side = parse_side(require_string(line, "side")),
+      .price = Price{require_int(line, "price")},
+      .quantity = Quantity{static_cast<std::uint64_t>(require_int(line, "quantity"))},
+      .account = AccountId{static_cast<std::uint64_t>(
+          field(line, "account") ? require_int(line, "account") : 0)},
+      .tif = optional_tif(line),
+      .symbol = Symbol{static_cast<std::uint64_t>(
+          field(line, "symbol") ? require_int(line, "symbol") : 0)},
+      .post_only = optional_bool(line, "post_only"),
+      .reduce_only = optional_bool(line, "reduce_only"),
+      .display = Quantity{static_cast<std::uint64_t>(
+          field(line, "display") ? require_int(line, "display") : 0)},
+      .expire_at = static_cast<std::uint64_t>(
+          field(line, "expire_at") ? require_int(line, "expire_at") : 0),
+  };
+}
+
+inline MarketOrder parse_market_order(std::string_view line) {
+  return MarketOrder{
+      .id = OrderId{static_cast<std::uint64_t>(require_int(line, "id"))},
+      .side = parse_side(require_string(line, "side")),
+      .quantity = Quantity{static_cast<std::uint64_t>(require_int(line, "quantity"))},
+      .account = AccountId{static_cast<std::uint64_t>(
+          field(line, "account") ? require_int(line, "account") : 0)},
+      .symbol = Symbol{static_cast<std::uint64_t>(
+          field(line, "symbol") ? require_int(line, "symbol") : 0)},
+      .reduce_only = optional_bool(line, "reduce_only"),
+  };
+}
+
+inline StopOrder parse_stop_order(std::string_view line) {
+  StopOrder stop{
+      .id = OrderId{static_cast<std::uint64_t>(require_int(line, "id"))},
+      .side = parse_side(require_string(line, "side")),
+      .stop_price = Price{require_int(line, "stop_price")},
+      .quantity = Quantity{static_cast<std::uint64_t>(require_int(line, "quantity"))},
+      .account = AccountId{static_cast<std::uint64_t>(
+          field(line, "account") ? require_int(line, "account") : 0)},
+      .limit_price = std::nullopt,
+      .tif = optional_tif(line),
+      .symbol = Symbol{static_cast<std::uint64_t>(
+          field(line, "symbol") ? require_int(line, "symbol") : 0)},
+      .expire_at = static_cast<std::uint64_t>(
+          field(line, "expire_at") ? require_int(line, "expire_at") : 0),
+  };
+  if (field(line, "limit_price")) {
+    stop.limit_price = Price{require_int(line, "limit_price")};
+  }
+  return stop;
+}
+
+// Shared body fields for event / reject lines (no surrounding type / braces).
+inline void append_limit_fields(std::ostream& out, const Order& order) {
+  out << ",\"id\":" << order.id.value() << ",\"side\":\"" << format_side(order.side)
+      << '"' << ",\"price\":" << order.price.ticks()
+      << ",\"quantity\":" << order.quantity.value()
+      << ",\"account\":" << order.account.value() << ",\"tif\":\""
+      << format_tif(order.tif) << '"' << ",\"symbol\":" << order.symbol.value();
+  if (order.post_only) {
+    out << ",\"post_only\":true";
+  }
+  if (order.reduce_only) {
+    out << ",\"reduce_only\":true";
+  }
+  if (!order.display.is_zero()) {
+    out << ",\"display\":" << order.display.value();
+  }
+  if (order.expire_at != 0) {
+    out << ",\"expire_at\":" << order.expire_at;
+  }
+}
+
+inline void append_market_fields(std::ostream& out, const MarketOrder& order) {
+  out << ",\"id\":" << order.id.value() << ",\"side\":\"" << format_side(order.side)
+      << '"' << ",\"quantity\":" << order.quantity.value()
+      << ",\"account\":" << order.account.value()
+      << ",\"symbol\":" << order.symbol.value();
+  if (order.reduce_only) {
+    out << ",\"reduce_only\":true";
+  }
+}
+
+// Event lines omit expire_at when 0; restart snapshots always write it.
+inline void append_stop_fields(std::ostream& out, const StopOrder& stop,
+                               bool always_expire = false) {
+  out << ",\"id\":" << stop.id.value() << ",\"side\":\"" << format_side(stop.side) << '"'
+      << ",\"stop_price\":" << stop.stop_price.ticks()
+      << ",\"quantity\":" << stop.quantity.value()
+      << ",\"account\":" << stop.account.value();
+  if (stop.limit_price) {
+    out << ",\"limit_price\":" << stop.limit_price->ticks();
+  }
+  out << ",\"tif\":\"" << format_tif(stop.tif) << '"'
+      << ",\"symbol\":" << stop.symbol.value();
+  if (always_expire || stop.expire_at != 0) {
+    out << ",\"expire_at\":" << stop.expire_at;
+  }
+}
+
 }  // namespace detail
 
 inline Event parse_event_line(std::string_view line) {
@@ -193,36 +295,10 @@ inline Event parse_event_line(std::string_view line) {
 
   const std::string type = detail::require_string(line, "type");
   if (type == "limit") {
-    return Order{
-        .id = OrderId{static_cast<std::uint64_t>(detail::require_int(line, "id"))},
-        .side = detail::parse_side(detail::require_string(line, "side")),
-        .price = Price{detail::require_int(line, "price")},
-        .quantity = Quantity{static_cast<std::uint64_t>(detail::require_int(line, "quantity"))},
-        .account = AccountId{static_cast<std::uint64_t>(
-            detail::field(line, "account") ? detail::require_int(line, "account") : 0)},
-        .tif = detail::optional_tif(line),
-        .symbol = Symbol{static_cast<std::uint64_t>(
-            detail::field(line, "symbol") ? detail::require_int(line, "symbol") : 0)},
-        .post_only = detail::optional_bool(line, "post_only"),
-        .reduce_only = detail::optional_bool(line, "reduce_only"),
-        .display = Quantity{static_cast<std::uint64_t>(
-            detail::field(line, "display") ? detail::require_int(line, "display") : 0)},
-        .expire_at = static_cast<std::uint64_t>(
-            detail::field(line, "expire_at") ? detail::require_int(line, "expire_at")
-                                             : 0),
-    };
+    return detail::parse_limit_order(line);
   }
   if (type == "market") {
-    return MarketOrder{
-        .id = OrderId{static_cast<std::uint64_t>(detail::require_int(line, "id"))},
-        .side = detail::parse_side(detail::require_string(line, "side")),
-        .quantity = Quantity{static_cast<std::uint64_t>(detail::require_int(line, "quantity"))},
-        .account = AccountId{static_cast<std::uint64_t>(
-            detail::field(line, "account") ? detail::require_int(line, "account") : 0)},
-        .symbol = Symbol{static_cast<std::uint64_t>(
-            detail::field(line, "symbol") ? detail::require_int(line, "symbol") : 0)},
-        .reduce_only = detail::optional_bool(line, "reduce_only"),
-    };
+    return detail::parse_market_order(line);
   }
   if (type == "cancel") {
     return CancelOrder{
@@ -250,96 +326,20 @@ inline Event parse_event_line(std::string_view line) {
     return MassCancelOrder{.filter = filter};
   }
   if (type == "stop") {
-    StopOrder stop{
-        .id = OrderId{static_cast<std::uint64_t>(detail::require_int(line, "id"))},
-        .side = detail::parse_side(detail::require_string(line, "side")),
-        .stop_price = Price{detail::require_int(line, "stop_price")},
-        .quantity = Quantity{static_cast<std::uint64_t>(detail::require_int(line, "quantity"))},
-        .account = AccountId{static_cast<std::uint64_t>(
-            detail::field(line, "account") ? detail::require_int(line, "account") : 0)},
-        .limit_price = std::nullopt,
-        .tif = detail::optional_tif(line),
-        .symbol = Symbol{static_cast<std::uint64_t>(
-            detail::field(line, "symbol") ? detail::require_int(line, "symbol") : 0)},
-        .expire_at = static_cast<std::uint64_t>(
-            detail::field(line, "expire_at") ? detail::require_int(line, "expire_at")
-                                             : 0),
-    };
-    if (detail::field(line, "limit_price")) {
-      stop.limit_price = Price{detail::require_int(line, "limit_price")};
-    }
-    return stop;
+    return detail::parse_stop_order(line);
   }
   if (type == "reject") {
     const RiskDecision decision =
         detail::parse_decision(detail::require_string(line, "decision"));
     const std::string order_type = detail::require_string(line, "order_type");
     if (order_type == "limit") {
-      return RejectEvent{
-          .decision = decision,
-          .attempt = Order{
-              .id = OrderId{static_cast<std::uint64_t>(detail::require_int(line, "id"))},
-              .side = detail::parse_side(detail::require_string(line, "side")),
-              .price = Price{detail::require_int(line, "price")},
-              .quantity = Quantity{static_cast<std::uint64_t>(
-                  detail::require_int(line, "quantity"))},
-              .account = AccountId{static_cast<std::uint64_t>(
-                  detail::field(line, "account") ? detail::require_int(line, "account")
-                                                 : 0)},
-              .tif = detail::optional_tif(line),
-              .symbol = Symbol{static_cast<std::uint64_t>(
-                  detail::field(line, "symbol") ? detail::require_int(line, "symbol")
-                                                : 0)},
-              .post_only = detail::optional_bool(line, "post_only"),
-              .reduce_only = detail::optional_bool(line, "reduce_only"),
-              .display = Quantity{static_cast<std::uint64_t>(
-                  detail::field(line, "display") ? detail::require_int(line, "display")
-                                                 : 0)},
-              .expire_at = static_cast<std::uint64_t>(
-                  detail::field(line, "expire_at") ? detail::require_int(line, "expire_at")
-                                                   : 0),
-          },
-      };
+      return RejectEvent{.decision = decision, .attempt = detail::parse_limit_order(line)};
     }
     if (order_type == "market") {
-      return RejectEvent{
-          .decision = decision,
-          .attempt = MarketOrder{
-              .id = OrderId{static_cast<std::uint64_t>(detail::require_int(line, "id"))},
-              .side = detail::parse_side(detail::require_string(line, "side")),
-              .quantity = Quantity{static_cast<std::uint64_t>(
-                  detail::require_int(line, "quantity"))},
-              .account = AccountId{static_cast<std::uint64_t>(
-                  detail::field(line, "account") ? detail::require_int(line, "account")
-                                                 : 0)},
-              .symbol = Symbol{static_cast<std::uint64_t>(
-                  detail::field(line, "symbol") ? detail::require_int(line, "symbol")
-                                                : 0)},
-              .reduce_only = detail::optional_bool(line, "reduce_only"),
-          },
-      };
+      return RejectEvent{.decision = decision, .attempt = detail::parse_market_order(line)};
     }
     if (order_type == "stop") {
-      StopOrder stop{
-          .id = OrderId{static_cast<std::uint64_t>(detail::require_int(line, "id"))},
-          .side = detail::parse_side(detail::require_string(line, "side")),
-          .stop_price = Price{detail::require_int(line, "stop_price")},
-          .quantity = Quantity{static_cast<std::uint64_t>(
-              detail::require_int(line, "quantity"))},
-          .account = AccountId{static_cast<std::uint64_t>(
-              detail::field(line, "account") ? detail::require_int(line, "account") : 0)},
-          .limit_price = std::nullopt,
-          .tif = detail::optional_tif(line),
-          .symbol = Symbol{static_cast<std::uint64_t>(
-              detail::field(line, "symbol") ? detail::require_int(line, "symbol") : 0)},
-          .expire_at = static_cast<std::uint64_t>(
-              detail::field(line, "expire_at") ? detail::require_int(line, "expire_at")
-                                               : 0),
-      };
-      if (detail::field(line, "limit_price")) {
-        stop.limit_price = Price{detail::require_int(line, "limit_price")};
-      }
-      return RejectEvent{.decision = decision, .attempt = std::move(stop)};
+      return RejectEvent{.decision = decision, .attempt = detail::parse_stop_order(line)};
     }
     throw std::runtime_error("invalid reject order_type");
   }
@@ -357,37 +357,12 @@ inline std::string format_event_line(const Event& event) {
         using T = std::decay_t<decltype(payload)>;
         std::ostringstream out;
         if constexpr (std::is_same_v<T, Order>) {
-          out << "{\"type\":\"limit\""
-              << ",\"id\":" << payload.id.value()
-              << ",\"side\":\"" << detail::format_side(payload.side) << '"'
-              << ",\"price\":" << payload.price.ticks()
-              << ",\"quantity\":" << payload.quantity.value()
-              << ",\"account\":" << payload.account.value()
-              << ",\"tif\":\"" << detail::format_tif(payload.tif) << '"'
-              << ",\"symbol\":" << payload.symbol.value();
-          if (payload.post_only) {
-            out << ",\"post_only\":true";
-          }
-          if (payload.reduce_only) {
-            out << ",\"reduce_only\":true";
-          }
-          if (!payload.display.is_zero()) {
-            out << ",\"display\":" << payload.display.value();
-          }
-          if (payload.expire_at != 0) {
-            out << ",\"expire_at\":" << payload.expire_at;
-          }
+          out << "{\"type\":\"limit\"";
+          detail::append_limit_fields(out, payload);
           out << '}';
         } else if constexpr (std::is_same_v<T, MarketOrder>) {
-          out << "{\"type\":\"market\""
-              << ",\"id\":" << payload.id.value()
-              << ",\"side\":\"" << detail::format_side(payload.side) << '"'
-              << ",\"quantity\":" << payload.quantity.value()
-              << ",\"account\":" << payload.account.value()
-              << ",\"symbol\":" << payload.symbol.value();
-          if (payload.reduce_only) {
-            out << ",\"reduce_only\":true";
-          }
+          out << "{\"type\":\"market\"";
+          detail::append_market_fields(out, payload);
           out << '}';
         } else if constexpr (std::is_same_v<T, CancelOrder>) {
           out << "{\"type\":\"cancel\",\"id\":" << payload.id.value() << '}';
@@ -415,51 +390,14 @@ inline std::string format_event_line(const Event& event) {
               [&](const auto& attempt) {
                 using A = std::decay_t<decltype(attempt)>;
                 if constexpr (std::is_same_v<A, Order>) {
-                  out << ",\"order_type\":\"limit\""
-                      << ",\"id\":" << attempt.id.value()
-                      << ",\"side\":\"" << detail::format_side(attempt.side) << '"'
-                      << ",\"price\":" << attempt.price.ticks()
-                      << ",\"quantity\":" << attempt.quantity.value()
-                      << ",\"account\":" << attempt.account.value()
-                      << ",\"tif\":\"" << detail::format_tif(attempt.tif) << '"'
-                      << ",\"symbol\":" << attempt.symbol.value();
-                  if (attempt.post_only) {
-                    out << ",\"post_only\":true";
-                  }
-                  if (attempt.reduce_only) {
-                    out << ",\"reduce_only\":true";
-                  }
-                  if (!attempt.display.is_zero()) {
-                    out << ",\"display\":" << attempt.display.value();
-                  }
-                  if (attempt.expire_at != 0) {
-                    out << ",\"expire_at\":" << attempt.expire_at;
-                  }
+                  out << ",\"order_type\":\"limit\"";
+                  detail::append_limit_fields(out, attempt);
                 } else if constexpr (std::is_same_v<A, MarketOrder>) {
-                  out << ",\"order_type\":\"market\""
-                      << ",\"id\":" << attempt.id.value()
-                      << ",\"side\":\"" << detail::format_side(attempt.side) << '"'
-                      << ",\"quantity\":" << attempt.quantity.value()
-                      << ",\"account\":" << attempt.account.value()
-                      << ",\"symbol\":" << attempt.symbol.value();
-                  if (attempt.reduce_only) {
-                    out << ",\"reduce_only\":true";
-                  }
+                  out << ",\"order_type\":\"market\"";
+                  detail::append_market_fields(out, attempt);
                 } else {
-                  out << ",\"order_type\":\"stop\""
-                      << ",\"id\":" << attempt.id.value()
-                      << ",\"side\":\"" << detail::format_side(attempt.side) << '"'
-                      << ",\"stop_price\":" << attempt.stop_price.ticks()
-                      << ",\"quantity\":" << attempt.quantity.value()
-                      << ",\"account\":" << attempt.account.value();
-                  if (attempt.limit_price) {
-                    out << ",\"limit_price\":" << attempt.limit_price->ticks();
-                  }
-                  out << ",\"tif\":\"" << detail::format_tif(attempt.tif) << '"'
-                      << ",\"symbol\":" << attempt.symbol.value();
-                  if (attempt.expire_at != 0) {
-                    out << ",\"expire_at\":" << attempt.expire_at;
-                  }
+                  out << ",\"order_type\":\"stop\"";
+                  detail::append_stop_fields(out, attempt);
                 }
               },
               payload.attempt);
@@ -467,20 +405,8 @@ inline std::string format_event_line(const Event& event) {
         } else if constexpr (std::is_same_v<T, TimeAdvance>) {
           out << "{\"type\":\"time\",\"time\":" << payload.time << '}';
         } else {
-          out << "{\"type\":\"stop\""
-              << ",\"id\":" << payload.id.value()
-              << ",\"side\":\"" << detail::format_side(payload.side) << '"'
-              << ",\"stop_price\":" << payload.stop_price.ticks()
-              << ",\"quantity\":" << payload.quantity.value()
-              << ",\"account\":" << payload.account.value();
-          if (payload.limit_price) {
-            out << ",\"limit_price\":" << payload.limit_price->ticks();
-          }
-          out << ",\"tif\":\"" << detail::format_tif(payload.tif) << '"'
-              << ",\"symbol\":" << payload.symbol.value();
-          if (payload.expire_at != 0) {
-            out << ",\"expire_at\":" << payload.expire_at;
-          }
+          out << "{\"type\":\"stop\"";
+          detail::append_stop_fields(out, payload);
           out << '}';
         }
         return out.str();

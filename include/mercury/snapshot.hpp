@@ -10,13 +10,12 @@
 namespace mercury {
 namespace snapshot {
 
-using jsonl::detail::field;
+using jsonl::detail::append_stop_fields;
 using jsonl::detail::format_side;
 using jsonl::detail::format_tif;
 using jsonl::detail::optional_bool;
-using jsonl::detail::optional_tif;
-using jsonl::detail::parse_side;
-using jsonl::detail::parse_tif;
+using jsonl::detail::parse_limit_order;
+using jsonl::detail::parse_stop_order;
 using jsonl::detail::require_int;
 using jsonl::detail::require_string;
 
@@ -77,17 +76,9 @@ inline std::string format_restart(const RestartSnapshot& snap) {
         << ",\"cash_reserve_qty\":" << row.cash_reserve_qty.value() << "}\n";
   }
   for (const StopOrder& stop : snap.stops) {
-    out << "{\"type\":\"stop\""
-        << ",\"id\":" << stop.id.value() << ",\"side\":\"" << format_side(stop.side)
-        << '"' << ",\"stop_price\":" << stop.stop_price.ticks()
-        << ",\"quantity\":" << stop.quantity.value()
-        << ",\"account\":" << stop.account.value();
-    if (stop.limit_price) {
-      out << ",\"limit_price\":" << stop.limit_price->ticks();
-    }
-    out << ",\"tif\":\"" << format_tif(stop.tif) << '"'
-        << ",\"symbol\":" << stop.symbol.value() << ",\"expire_at\":" << stop.expire_at
-        << "}\n";
+    out << "{\"type\":\"stop\"";
+    append_stop_fields(out, stop, /*always_expire=*/true);
+    out << "}\n";
   }
   return out.str();
 }
@@ -156,24 +147,15 @@ inline RestartSnapshot parse_restart(std::string_view text) {
       continue;
     }
     if (type == "order") {
-      Order order{
-          .id = OrderId{static_cast<std::uint64_t>(require_int(line, "id"))},
-          .side = parse_side(require_string(line, "side")),
-          .price = Price{require_int(line, "price")},
-          .quantity = Quantity{static_cast<std::uint64_t>(require_int(line, "quantity"))},
-          .account =
-              AccountId{static_cast<std::uint64_t>(require_int(line, "account"))},
-          .tif = field(line, "tif") ? parse_tif(require_string(line, "tif"))
-                                    : TimeInForce::Gtc,
-          .symbol = Symbol{static_cast<std::uint64_t>(require_int(line, "symbol"))},
-          .post_only = false,
-          .reduce_only = false,
-          .display =
-              Quantity{static_cast<std::uint64_t>(require_int(line, "display"))},
-          .visible =
-              Quantity{static_cast<std::uint64_t>(require_int(line, "visible"))},
-          .expire_at = static_cast<std::uint64_t>(require_int(line, "expire_at")),
-      };
+      Order order = parse_limit_order(line);
+      // Restart lines always carry tip + cash reserve; force required fields.
+      order.display =
+          Quantity{static_cast<std::uint64_t>(require_int(line, "display"))};
+      order.visible =
+          Quantity{static_cast<std::uint64_t>(require_int(line, "visible"))};
+      order.expire_at = static_cast<std::uint64_t>(require_int(line, "expire_at"));
+      order.post_only = false;
+      order.reduce_only = false;
       snap.orders.push_back(RestartOrder{
           .order = order,
           .cash_reserve_qty = Quantity{static_cast<std::uint64_t>(
@@ -182,22 +164,9 @@ inline RestartSnapshot parse_restart(std::string_view text) {
       continue;
     }
     if (type == "stop") {
-      StopOrder stop{
-          .id = OrderId{static_cast<std::uint64_t>(require_int(line, "id"))},
-          .side = parse_side(require_string(line, "side")),
-          .stop_price = Price{require_int(line, "stop_price")},
-          .quantity =
-              Quantity{static_cast<std::uint64_t>(require_int(line, "quantity"))},
-          .account =
-              AccountId{static_cast<std::uint64_t>(require_int(line, "account"))},
-          .limit_price = std::nullopt,
-          .tif = optional_tif(line),
-          .symbol = Symbol{static_cast<std::uint64_t>(require_int(line, "symbol"))},
-          .expire_at = static_cast<std::uint64_t>(require_int(line, "expire_at")),
-      };
-      if (field(line, "limit_price")) {
-        stop.limit_price = Price{require_int(line, "limit_price")};
-      }
+      StopOrder stop = parse_stop_order(line);
+      // Restart always stores expire_at (may be 0).
+      stop.expire_at = static_cast<std::uint64_t>(require_int(line, "expire_at"));
       snap.stops.push_back(std::move(stop));
       continue;
     }
