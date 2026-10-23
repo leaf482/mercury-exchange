@@ -1,10 +1,9 @@
 #pragma once
 
 #include "mercury/balances.hpp"
-#include "mercury/fees.hpp"
+#include "mercury/engine_types.hpp"
 #include "mercury/order_book.hpp"
 #include "mercury/positions.hpp"
-#include "mercury/risk.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -18,89 +17,6 @@ namespace mercury {
 constexpr Side opposite_side(Side side) {
   return side == Side::Buy ? Side::Sell : Side::Buy;
 }
-
-struct SubmitResult {
-  RiskDecision decision{RiskDecision::Accept};
-  std::vector<Trade> trades{};
-};
-
-enum class MarkSource : std::uint8_t { LastTrade, Mid };
-
-struct MassCancelFilter {
-  std::optional<AccountId> account;
-  std::optional<Symbol> symbol;
-  std::optional<Side> side;
-
-  constexpr bool operator==(const MassCancelFilter&) const = default;
-};
-
-struct PositionReport {
-  Symbol symbol{0};
-  std::int64_t quantity{0};
-  std::int64_t avg_ticks{0};
-  std::int64_t realized_pnl{0};
-  std::optional<std::int64_t> mark_ticks;
-  std::optional<std::int64_t> unrealized_pnl;
-};
-
-// Portfolio view for one account (tick * quantity cash units).
-struct AccountReport {
-  AccountId account{0};
-  std::int64_t cash{0};
-  std::int64_t reserved{0};
-  std::int64_t available{0};
-  std::int64_t fees_paid{0};
-  std::vector<PositionReport> positions;
-  std::int64_t realized_pnl{0};
-  std::optional<std::int64_t> unrealized_pnl;  // nullopt if any open row lacks mark
-  std::int64_t inventory_mark{0};              // sum(qty * mark) where mark known
-  std::int64_t equity{0};                      // cash + inventory_mark
-};
-
-struct RestartCash {
-  AccountId account{0};
-  std::int64_t amount{0};
-};
-
-struct RestartFees {
-  AccountId account{0};
-  std::int64_t amount{0};
-};
-
-struct RestartPosition {
-  AccountId account{0};
-  Symbol symbol{0};
-  std::int64_t quantity{0};
-  std::int64_t avg_ticks{0};
-  std::int64_t realized_pnl{0};
-};
-
-struct RestartLastTrade {
-  Symbol symbol{0};
-  Price price{0};
-};
-
-struct RestartOrder {
-  Order order;
-  Quantity cash_reserve_qty{0};
-};
-
-// Enough state to continue matching on a fresh Engine. Not a database: one
-// in-memory copy (and a JSONL encoding) of book, positions, cash, and clock.
-struct RestartSnapshot {
-  std::uint64_t now{0};
-  std::uint64_t next_trade_id{1};
-  bool enforce_cash{false};
-  FeeSchedule fees{};
-  SelfTradePrevention stp{SelfTradePrevention::Off};
-  RiskLimits limits{};
-  std::vector<RestartCash> cash;
-  std::vector<RestartFees> fees_paid;
-  std::vector<RestartPosition> positions;
-  std::vector<RestartLastTrade> last_trades;
-  std::vector<RestartOrder> orders;
-  std::vector<StopOrder> stops;
-};
 
 // Per-symbol OrderBooks + shared Positions, with risk checks and stop orders.
 class Engine {
@@ -629,11 +545,11 @@ class Engine {
     return false;
   }
 
-  SubmitResult fire_stop(StopOrder stop) {
-    SubmitResult result;
+  // Convert a triggered stop into a limit/market submit. Does not drain again.
+  SubmitResult submit_stop(StopOrder stop) {
     const Symbol symbol = stop.symbol;
     if (stop.limit_price) {
-      result = submit_limit(Order{
+      return submit_limit(Order{
           .id = stop.id,
           .side = stop.side,
           .price = *stop.limit_price,
@@ -643,15 +559,19 @@ class Engine {
           .symbol = symbol,
           .expire_at = stop.tif == TimeInForce::Gtd ? stop.expire_at : 0,
       });
-    } else {
-      result = submit_market(MarketOrder{
-          .id = stop.id,
-          .side = stop.side,
-          .quantity = stop.quantity,
-          .account = stop.account,
-          .symbol = symbol,
-      });
     }
+    return submit_market(MarketOrder{
+        .id = stop.id,
+        .side = stop.side,
+        .quantity = stop.quantity,
+        .account = stop.account,
+        .symbol = symbol,
+    });
+  }
+
+  SubmitResult fire_stop(StopOrder stop) {
+    const Symbol symbol = stop.symbol;
+    SubmitResult result = submit_stop(std::move(stop));
     if (result.decision == RiskDecision::Accept) {
       append_trades(result.trades, drain_stops(symbol));
     }
@@ -674,28 +594,7 @@ class Engine {
         it = inst.stops.erase(it);
         reduce_open(stop.id, stop.quantity);
 
-        SubmitResult fired;
-        if (stop.limit_price) {
-          fired = submit_limit(Order{
-              .id = stop.id,
-              .side = stop.side,
-              .price = *stop.limit_price,
-              .quantity = stop.quantity,
-              .account = stop.account,
-              .tif = stop.tif,
-              .symbol = symbol,
-              .expire_at = stop.tif == TimeInForce::Gtd ? stop.expire_at : 0,
-          });
-        } else {
-          fired = submit_market(MarketOrder{
-              .id = stop.id,
-              .side = stop.side,
-              .quantity = stop.quantity,
-              .account = stop.account,
-              .symbol = symbol,
-          });
-        }
-
+        SubmitResult fired = submit_stop(std::move(stop));
         if (fired.decision == RiskDecision::Accept) {
           append_trades(trades, std::move(fired.trades));
           progressed = true;
@@ -706,15 +605,50 @@ class Engine {
     return trades;
   }
 
+  // Shared risk / reduce-only / cash gates for limit and market submits.
+  // Callers that need GTD validation run it between check_order and this helper
+  // by splitting: use check_order first, then precheck_reduce_cash.
+  RiskDecision precheck_submit(AccountId account, Symbol symbol, Side side,
+                               Quantity quantity, bool reduce_only, bool is_market,
+                               Price cash_limit,
+                               const WorkingExposure& exposure) const {
+    const RiskDecision decision =
+        check_order(limits_, positions_, account, side, quantity, exposure.buy,
+                    exposure.sell, symbol);
+    if (decision != RiskDecision::Accept) {
+      return decision;
+    }
+    return precheck_reduce_cash(account, symbol, side, quantity, reduce_only, is_market,
+                                cash_limit);
+  }
+
+  RiskDecision precheck_reduce_cash(AccountId account, Symbol symbol, Side side,
+                                    Quantity quantity, bool reduce_only, bool is_market,
+                                    Price cash_limit) const {
+    if (reduce_only) {
+      const RiskDecision reduce =
+          check_reduce_only(positions_, account, side, quantity, symbol);
+      if (reduce != RiskDecision::Accept) {
+        return reduce;
+      }
+    }
+    if (side == Side::Buy) {
+      return check_buy_cash(account, symbol, cash_limit, quantity, is_market);
+    }
+    return check_sell_margin(account, symbol, cash_limit, quantity, is_market);
+  }
+
   SubmitResult submit_limit(Order order) {
     const AccountId account = order.account;
     const Symbol symbol = order.symbol;
     const WorkingExposure exposure = working_for(account, symbol);
-    const RiskDecision decision =
-        check_order(limits_, positions_, account, order.side, order.quantity,
-                    exposure.buy, exposure.sell, symbol);
-    if (decision != RiskDecision::Accept) {
-      return SubmitResult{.decision = decision};
+    {
+      const RiskDecision decision =
+          check_order(limits_, positions_, account, order.side, order.quantity,
+                      exposure.buy, exposure.sell, symbol);
+      if (decision != RiskDecision::Accept) {
+        return SubmitResult{.decision = decision};
+      }
     }
     if (order.tif == TimeInForce::Gtd) {
       if (order.expire_at == 0 || order.expire_at <= now_) {
@@ -723,28 +657,16 @@ class Engine {
     } else {
       order.expire_at = 0;
     }
-    if (order.reduce_only) {
-      const RiskDecision reduce =
-          check_reduce_only(positions_, account, order.side, order.quantity, symbol);
-      if (reduce != RiskDecision::Accept) {
-        return SubmitResult{.decision = reduce};
+    {
+      const RiskDecision decision =
+          precheck_reduce_cash(account, symbol, order.side, order.quantity,
+                               order.reduce_only, /*is_market=*/false, order.price);
+      if (decision != RiskDecision::Accept) {
+        return SubmitResult{.decision = decision};
       }
     }
     if (order.post_only && instrument(symbol).book.would_take(order)) {
       return SubmitResult{.decision = RiskDecision::PostOnly};
-    }
-    if (order.side == Side::Buy) {
-      const RiskDecision cash =
-          check_buy_cash(account, symbol, order.price, order.quantity, false);
-      if (cash != RiskDecision::Accept) {
-        return SubmitResult{.decision = cash};
-      }
-    } else {
-      const RiskDecision cash =
-          check_sell_margin(account, symbol, order.price, order.quantity, false);
-      if (cash != RiskDecision::Accept) {
-        return SubmitResult{.decision = cash};
-      }
     }
 
     const OrderId id = order.id;
@@ -792,30 +714,10 @@ class Engine {
     const Symbol symbol = order.symbol;
     const WorkingExposure exposure = working_for(account, symbol);
     const RiskDecision decision =
-        check_order(limits_, positions_, account, order.side, order.quantity,
-                    exposure.buy, exposure.sell, symbol);
+        precheck_submit(account, symbol, order.side, order.quantity, order.reduce_only,
+                        /*is_market=*/true, Price{0}, exposure);  // no GTD on markets
     if (decision != RiskDecision::Accept) {
       return SubmitResult{.decision = decision};
-    }
-    if (order.reduce_only) {
-      const RiskDecision reduce =
-          check_reduce_only(positions_, account, order.side, order.quantity, symbol);
-      if (reduce != RiskDecision::Accept) {
-        return SubmitResult{.decision = reduce};
-      }
-    }
-    if (order.side == Side::Buy) {
-      const RiskDecision cash =
-          check_buy_cash(account, symbol, Price{0}, order.quantity, true);
-      if (cash != RiskDecision::Accept) {
-        return SubmitResult{.decision = cash};
-      }
-    } else {
-      const RiskDecision cash =
-          check_sell_margin(account, symbol, Price{0}, order.quantity, true);
-      if (cash != RiskDecision::Accept) {
-        return SubmitResult{.decision = cash};
-      }
     }
 
     const Side taker_side = order.side;
